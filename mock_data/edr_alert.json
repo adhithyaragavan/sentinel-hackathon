@@ -1,0 +1,49 @@
+{
+  "alert_id": "EDR-2024-001337",
+  "timestamp": "2024-06-30T14:22:31Z",
+  "hostname": "WORKSTATION-04",
+  "username": "jsmith",
+  "os": "Windows 10 22H2",
+  "process": {
+    "name": "invoice_june.pdf.exe",
+    "pid": 4821,
+    "parent_name": "outlook.exe",
+    "parent_pid": 2304,
+    "path": "C:\\Users\\jsmith\\AppData\\Local\\Temp\\invoice_june.pdf.exe",
+    "command_line": "C:\\Users\\jsmith\\AppData\\Local\\Temp\\invoice_june.pdf.exe --silent",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "signed": false,
+    "signer": null
+  },
+  "network": {
+    "outbound_connections": [
+      {
+        "dst_ip": "185.220.101.47",
+        "dst_port": 4444,
+        "protocol": "TCP",
+        "bytes_sent": 2048,
+        "country": "RU"
+      }
+    ]
+  },
+  "file_events": [
+    {
+      "action": "CREATE",
+      "path": "C:\\Users\\jsmith\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\svchost32.exe"
+    },
+    {
+      "action": "MODIFY",
+      "path": "C:\\Windows\\System32\\drivers\\etc\\hosts"
+    }
+  ],
+  "registry_events": [
+    {
+      "action": "SET",
+      "key": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+      "value": "svchost32",
+      "data": "C:\\Users\\jsmith\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\svchost32.exe"
+    }
+  ],
+  "rule_triggered": "SUSPICIOUS_CHILD_PROCESS_OUTLOOK",
+  "mitre_techniques": ["T1566.001", "T1059", "T1547.001", "T1071.001"]
+}
