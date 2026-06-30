@@ -1,0 +1,29 @@
+{
+  "hashes": {
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855": {
+      "malicious": true,
+      "vendor_detections": 54,
+      "total_vendors": 72,
+      "malware_family": "AsyncRAT",
+      "malware_type": "RAT",
+      "first_seen": "2024-05-12T08:14:00Z",
+      "last_seen": "2024-06-28T19:43:00Z",
+      "tags": ["rat", "c2", "persistence", "dropper"],
+      "source": "VirusTotal (stubbed)"
+    }
+  },
+  "ips": {
+    "185.220.101.47": {
+      "malicious": true,
+      "abuse_confidence_score": 97,
+      "country": "RU",
+      "isp": "Frantech Solutions",
+      "domain": "tor-exit-node.example",
+      "usage_type": "Tor Exit Node / C2 hosting",
+      "known_campaigns": ["AsyncRAT-2024", "PhishKit-EU-Q2"],
+      "reports_last_90d": 312,
+      "tags": ["c2", "tor-exit", "bulletproof-hosting"],
+      "source": "AbuseIPDB (stubbed)"
+    }
+  }
+}
