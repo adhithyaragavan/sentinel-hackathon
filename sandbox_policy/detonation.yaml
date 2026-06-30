@@ -1,0 +1,17 @@
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only: [/usr, /lib, /proc, /etc]
+  read_write: [/sandbox, /tmp]
+
+landlock:
+  compatibility: best_effort
+
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+
+# No network_policies block = default-deny all outbound connections.
+# Any attempt to reach external hosts (e.g. C2 at 185.220.101.47:4444)
+# will be blocked and logged with action=deny.
