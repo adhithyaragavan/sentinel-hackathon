@@ -11,11 +11,13 @@ if [ ! -x "$PY" ]; then
   exit 1
 fi
 
-echo "==> Checking OpenShell gateway..."
-if command -v openshell >/dev/null 2>&1; then
-  openshell status || echo "WARNING: openshell gateway not connected"
+echo "==> Checking Docker daemon..."
+if docker info >/dev/null 2>&1; then
+  echo "Docker daemon reachable"
+  # Pre-pull the sandbox image so the first detonation is fast
+  docker pull python:3.11-slim >/dev/null 2>&1 && echo "Sandbox image python:3.11-slim ready"
 else
-  echo "WARNING: openshell CLI not found — Tool-Executor step will fail"
+  echo "WARNING: Docker daemon not running — Tool-Executor step will fail"
 fi
 
 echo ""

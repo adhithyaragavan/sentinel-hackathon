@@ -65,8 +65,8 @@ outbound C2 connection is **blocked live** inside the OpenShell sandbox.
 
 - **NVIDIA NIM** — cloud inference at `https://integrate.api.nvidia.com/v1`.
   Default model `nvidia/nemotron-3-nano-30b-a3b`.
-- **NVIDIA OpenShell** — kernel-level sandbox isolation (Landlock + seccomp +
-  network namespaces) for the detonation step.
+- **Docker** — sandbox isolation for the detonation step (`--network none` blocks
+  all outbound connections, `--read-only`, `--cap-drop ALL`).
 - **Python 3** — agent logic and orchestration. Inference only, no training.
 
 ---
@@ -75,12 +75,7 @@ outbound C2 connection is **blocked live** inside the OpenShell sandbox.
 
 ### 1. Prerequisites
 - Python 3.10+
-- [OpenShell](https://docs.nvidia.com/openshell/latest/home) installed and the
-  local gateway running:
-  ```sh
-  curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh
-  openshell status   # should report "Connected"
-  ```
+- Docker Desktop running (`docker info` should succeed)
 
 ### 2. Install Python dependencies
 ```sh

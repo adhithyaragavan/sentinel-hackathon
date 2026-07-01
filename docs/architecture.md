@@ -31,25 +31,26 @@ before you have the file hash from forensics. A linear chain makes the evidence
 trail deterministic and the demo legible. Concurrency would only matter for
 multi-incident handling, which is out of scope (see limitations).
 
-## Safety design (NemoClaw / OpenShell)
+## Safety design (Docker sandbox)
 
 The Tool-Executor is the only stage that runs untrusted code — the suspected
-malware. Everything dangerous is confined there, inside an OpenShell sandbox.
-OpenShell provides the four safety boundaries NemoClaw is built around:
+malware. Everything dangerous is confined inside a Docker container with the
+following four safety boundaries:
 
-1. **Network egress control.** The sandbox policy (`sandbox_policy/detonation.yaml`)
-   declares *no* `network_policies`, which means default-deny. When the detonated
-   sample tries to beacon to its C2 (`185.220.101.47:4444`), the connection is
-   refused at the kernel level. This is verifiable live and is the core evidence
-   that the file is malicious.
+1. **Network egress control.** `--network none` removes the container's network
+   interface entirely at the kernel level. When the detonated sample tries to
+   beacon to its C2 (`185.220.101.47:4444`) it gets `ENETUNREACH` — the connection
+   never leaves the host. This is verifiable live and is the core evidence that the
+   file is malicious.
 
-2. **Filesystem scope.** Landlock restricts the sandbox to `/sandbox` and `/tmp`
-   read-write, with system paths read-only. Malware persistence attempts land in a
-   throwaway namespace, never the host.
+2. **Filesystem scope.** `--read-only` makes the container root filesystem
+   immutable. `--tmpfs /tmp:noexec,nosuid,size=64m` provides a capped, writable,
+   non-executable scratch space that is destroyed when the container exits. Malware
+   persistence attempts land in `/tmp` and disappear with the container.
 
-3. **Credentials isolation.** No host credentials, API keys, or environment secrets
-   are mounted into the sandbox. The `.env` (NIM key, Slack webhook) stays in the
-   orchestrator process only.
+3. **Credentials isolation.** Nothing from the host environment is mounted into the
+   container — no volumes except the read-only payload file, no env vars, no
+   secrets. The `.env` (NIM key, Slack webhook) stays in the orchestrator process.
 
 4. **Human control / approval gates.** The Supervisor enforces the final gate:
    any incident scoring at or above `RISK_SCORE_THRESHOLD` (default 0.7) is not
@@ -84,7 +85,6 @@ regressions in any stage and gives a single accuracy number.
 
 ## Known limitations
 
-- OpenShell is alpha — single-developer, single-environment; no concurrent
-  multi-incident handling.
+- Docker sandbox is single-container; no concurrent multi-incident handling.
 - Demo data is synthetic, not a live SIEM feed.
 - Threat-intel is stubbed (VirusTotal / AbuseIPDB-shaped fixtures), not live APIs.

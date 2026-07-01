@@ -1,6 +1,13 @@
 """
-Tool-Executor Agent — detonates the suspicious file inside an OpenShell sandbox
+Tool-Executor Agent — detonates the suspicious file inside a Docker sandbox
 with a default-deny network policy and captures blocked connection attempts.
+
+Sandbox enforcement:
+  --network none        no outbound connections (default-deny)
+  --read-only           immutable container filesystem
+  --tmpfs /tmp          writable scratch space, non-executable, dropped on exit
+  --cap-drop ALL        no Linux capabilities
+  --security-opt no-new-privileges
 
 Input:  {
     "alert":    <original EDR alert dict>,
@@ -10,7 +17,7 @@ Output: {
     "alert_id":          str,
     "sandbox_name":      str,
     "detonation_status": "completed" | "failed",
-    "blocked_connections": list[dict],  # C2 attempts that were denied
+    "blocked_connections": list[dict],
     "sandbox_log_excerpt": str,
     "verdict":           "malicious" | "suspicious" | "clean",
     "verdict_reason":    str
@@ -21,16 +28,12 @@ import sys
 import os
 import json
 import subprocess
-import re
 import tempfile
-import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-_POLICY_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "sandbox_policy", "detonation.yaml")
-)
-_SANDBOX_NAME = "sentinel-detonation"
+_SANDBOX_IMAGE = "python:3.11-slim"
+_SANDBOX_NAME  = "sentinel-detonation"
 
 # Simulated malware payload: tries to TCP-connect to the C2 IP, writes a
 # persistence stub, then exits. Stand-in for the real binary.
@@ -58,50 +61,9 @@ sys.exit(0)
 """
 
 
-def _run(cmd: list[str], timeout: int = 30) -> tuple[int, str, str]:
+def _run(cmd: list[str], timeout: int = 60) -> tuple[int, str, str]:
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     return result.returncode, result.stdout, result.stderr
-
-
-def _is_ready(name: str) -> bool:
-    rc, out, _ = _run(["openshell", "sandbox", "list"], timeout=15)
-    for line in out.splitlines():
-        if line.strip().startswith(name) and "Ready" in line:
-            return True
-    return False
-
-
-def _create_sandbox_and_wait(name: str, ready_timeout: int = 180) -> subprocess.Popen:
-    """`openshell sandbox create --keep` stays attached streaming logs and never
-    returns on its own, so we launch it detached and poll `sandbox list` until the
-    sandbox reports Ready. Returns the Popen handle so the caller can reap it."""
-    proc = subprocess.Popen(
-        ["openshell", "sandbox", "create", "--name", name, "--keep", "--no-auto-providers"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    deadline = time.time() + ready_timeout
-    while time.time() < deadline:
-        if _is_ready(name):
-            return proc
-        if proc.poll() is not None and not _is_ready(name):
-            raise RuntimeError(f"sandbox create process exited before {name} became Ready")
-        time.sleep(3)
-    raise RuntimeError(f"sandbox {name} did not become Ready within {ready_timeout}s")
-
-
-def _parse_deny_events(log_text: str) -> list[dict]:
-    events = []
-    for line in log_text.splitlines():
-        if "action=deny" not in line and "deny" not in line.lower():
-            continue
-        event = {"raw": line.strip()}
-        for key in ("dst_host", "dst_port", "binary", "deny_reason"):
-            m = re.search(rf'{key}=([^\s]+)', line)
-            if m:
-                event[key] = m.group(1)
-        events.append(event)
-    return events
 
 
 def run(inputs: dict) -> dict:
@@ -115,76 +77,59 @@ def run(inputs: dict) -> dict:
         f.write(_DECOY_PAYLOAD)
         payload_path = f.name
 
-    create_proc = None
     try:
-        # Tear down any stale sandbox from a previous run
-        _run(["openshell", "sandbox", "delete", _SANDBOX_NAME], timeout=60)
-
-        # Create sandbox — no network_policies block = default-deny all outbound.
-        # `create --keep` stays attached, so we launch detached and poll for Ready.
-        create_proc = _create_sandbox_and_wait(_SANDBOX_NAME)
-
-        # Apply policy
-        _run([
-            "openshell", "policy", "set", _SANDBOX_NAME,
-            "--policy", _POLICY_PATH,
-            "--wait",
-        ], timeout=30)
-
-        # Upload payload
-        rc, out, err = _run([
-            "openshell", "sandbox", "upload",
-            _SANDBOX_NAME, payload_path, "/sandbox/sample.py",
-        ], timeout=30)
-        if rc != 0:
-            raise RuntimeError(f"sandbox upload failed: {err}")
-
-        # Detonate
+        # Run payload in an isolated Docker container:
+        #   --network none    → all outbound connections blocked at the kernel level
+        #   --read-only       → immutable root filesystem
+        #   --tmpfs /tmp      → writable scratch, dropped on container exit
+        #   --cap-drop ALL    → strip all Linux capabilities
         rc, exec_out, exec_err = _run([
-            "openshell", "sandbox", "exec",
-            "-n", _SANDBOX_NAME,
-            "--", "python3", "/sandbox/sample.py",
+            "docker", "run", "--rm",
+            "--name",    _SANDBOX_NAME,
+            "--network", "none",
+            "--read-only",
+            "--tmpfs",   "/tmp:rw,noexec,nosuid,size=64m",
+            "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges",
+            "-v", f"{payload_path}:/sandbox/sample.py:ro",
+            _SANDBOX_IMAGE,
+            "python3", "/sandbox/sample.py",
         ], timeout=60)
 
         detonation_status = "completed"
-        time.sleep(2)  # let log pipeline flush deny events
+        combined_output   = "\n".join(filter(None, [exec_out, exec_err]))
 
-        # Collect logs
-        _, log_out, _ = _run(
-            ["openshell", "logs", _SANDBOX_NAME, "--since", "5m"], timeout=15
-        )
-
-        combined_output = "\n".join(filter(None, [exec_out, exec_err, log_out]))
-        blocked = _parse_deny_events(combined_output)
-
-        # Payload reports its own beacon failure — synthesize a deny event if
-        # the log pipeline didn't capture a structured one yet
-        if "beacon failed" in combined_output and not blocked:
+        # Synthesise a deny event from the payload's own report — Docker's
+        # --network none drops packets at the kernel; the payload gets ENETUNREACH
+        # or ECONNREFUSED and prints "beacon failed".
+        blocked = []
+        if "beacon failed" in combined_output:
             conns = alert.get("network", {}).get("outbound_connections", [{}])
-            c2 = conns[0] if conns else {}
+            c2    = conns[0] if conns else {}
             blocked = [{
-                "dst_host": c2.get("dst_ip", "unknown"),
-                "dst_port": str(c2.get("dst_port", "")),
-                "deny_reason": "connection refused by sandbox network policy",
+                "dst_host":    c2.get("dst_ip", "unknown"),
+                "dst_port":    str(c2.get("dst_port", "")),
+                "deny_reason": "network unreachable — container running with --network none",
                 "raw": next(
                     (l for l in combined_output.splitlines() if "beacon failed" in l), ""
                 ),
             }]
 
+    except subprocess.TimeoutExpired:
+        detonation_status = "failed"
+        combined_output   = "docker run timed out"
+        blocked           = []
     except Exception as e:
         detonation_status = "failed"
-        combined_output = str(e)
-        blocked = []
+        combined_output   = str(e)
+        blocked           = []
     finally:
         os.unlink(payload_path)
-        _run(["openshell", "sandbox", "delete", _SANDBOX_NAME], timeout=60)
-        # Reap the detached create process now that the sandbox is gone
-        if create_proc is not None:
-            try:
-                create_proc.terminate()
-                create_proc.wait(timeout=10)
-            except Exception:
-                create_proc.kill()
+        # Force-remove the container if it's still running (e.g. after timeout)
+        subprocess.run(
+            ["docker", "rm", "-f", _SANDBOX_NAME],
+            capture_output=True,
+        )
 
     hash_intel = forensic.get("hash_intel") or {}
     if blocked and hash_intel.get("malicious"):
@@ -206,13 +151,13 @@ def run(inputs: dict) -> dict:
         verdict_reason = "Detonation failed — treat as suspicious pending manual review."
 
     return {
-        "alert_id": alert_id,
-        "sandbox_name": _SANDBOX_NAME,
+        "alert_id":          alert_id,
+        "sandbox_name":      _SANDBOX_NAME,
         "detonation_status": detonation_status,
         "blocked_connections": blocked,
         "sandbox_log_excerpt": combined_output[:2000],
-        "verdict": verdict,
-        "verdict_reason": verdict_reason,
+        "verdict":           verdict,
+        "verdict_reason":    verdict_reason,
     }
 
 
@@ -228,10 +173,8 @@ if __name__ == "__main__":
         "alert_id": alert["alert_id"],
         "iocs": [{"type": "hash", "value": alert["process"]["sha256"]}],
         "hash_intel": {
-            "malicious": True,
-            "malware_family": "AsyncRAT",
-            "vendor_detections": 54,
-            "total_vendors": 72,
+            "malicious": True, "malware_family": "AsyncRAT",
+            "vendor_detections": 54, "total_vendors": 72,
         },
         "ip_intel": {"malicious": True},
         "mitre": alert["mitre_techniques"],

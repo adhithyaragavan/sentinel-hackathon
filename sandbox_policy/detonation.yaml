@@ -1,17 +1,40 @@
-version: 1
+# Sentinel sandbox policy — Docker enforcement flags
+#
+# Every detonation run in agents/executor.py applies these constraints:
+#
+#   --network none
+#       Default-deny all outbound connections at the kernel level.
+#       Any C2 beacon attempt gets ENETUNREACH / ECONNREFUSED.
+#
+#   --read-only
+#       Container root filesystem is immutable.
+#       Malware cannot modify system files.
+#
+#   --tmpfs /tmp:rw,noexec,nosuid,size=64m
+#       Writable scratch space capped at 64 MB, non-executable, dropped on exit.
+#       Persistence drops land here and disappear when the container exits.
+#
+#   --cap-drop ALL
+#       All Linux capabilities stripped. No privilege escalation possible.
+#
+#   --security-opt no-new-privileges
+#       Prevents setuid/setgid binaries from gaining privileges.
+#
+#   --rm
+#       Container and its filesystem are destroyed after the run.
 
-filesystem_policy:
-  include_workdir: true
-  read_only: [/usr, /lib, /proc, /etc]
-  read_write: [/sandbox, /tmp]
+image: python:3.11-slim
 
-landlock:
-  compatibility: best_effort
+network: none
 
-process:
-  run_as_user: sandbox
-  run_as_group: sandbox
+filesystem:
+  read_only: true
+  tmpfs:
+    - path: /tmp
+      options: rw,noexec,nosuid,size=64m
 
-# No network_policies block = default-deny all outbound connections.
-# Any attempt to reach external hosts (e.g. C2 at 185.220.101.47:4444)
-# will be blocked and logged with action=deny.
+capabilities:
+  drop: ALL
+
+security:
+  no_new_privileges: true
