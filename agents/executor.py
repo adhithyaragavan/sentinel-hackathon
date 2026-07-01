@@ -63,6 +63,33 @@ def _run(cmd: list[str], timeout: int = 30) -> tuple[int, str, str]:
     return result.returncode, result.stdout, result.stderr
 
 
+def _is_ready(name: str) -> bool:
+    rc, out, _ = _run(["openshell", "sandbox", "list"], timeout=15)
+    for line in out.splitlines():
+        if line.strip().startswith(name) and "Ready" in line:
+            return True
+    return False
+
+
+def _create_sandbox_and_wait(name: str, ready_timeout: int = 180) -> subprocess.Popen:
+    """`openshell sandbox create --keep` stays attached streaming logs and never
+    returns on its own, so we launch it detached and poll `sandbox list` until the
+    sandbox reports Ready. Returns the Popen handle so the caller can reap it."""
+    proc = subprocess.Popen(
+        ["openshell", "sandbox", "create", "--name", name, "--keep", "--no-auto-providers"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    deadline = time.time() + ready_timeout
+    while time.time() < deadline:
+        if _is_ready(name):
+            return proc
+        if proc.poll() is not None and not _is_ready(name):
+            raise RuntimeError(f"sandbox create process exited before {name} became Ready")
+        time.sleep(3)
+    raise RuntimeError(f"sandbox {name} did not become Ready within {ready_timeout}s")
+
+
 def _parse_deny_events(log_text: str) -> list[dict]:
     events = []
     for line in log_text.splitlines():
@@ -88,19 +115,14 @@ def run(inputs: dict) -> dict:
         f.write(_DECOY_PAYLOAD)
         payload_path = f.name
 
+    create_proc = None
     try:
         # Tear down any stale sandbox from a previous run
-        _run(["openshell", "sandbox", "delete", _SANDBOX_NAME])
+        _run(["openshell", "sandbox", "delete", _SANDBOX_NAME], timeout=60)
 
-        # Create sandbox — no network_policies block = default-deny all outbound
-        rc, out, err = _run([
-            "openshell", "sandbox", "create",
-            "--name", _SANDBOX_NAME,
-            "--keep",
-            "--no-auto-providers",
-        ], timeout=60)
-        if rc != 0:
-            raise RuntimeError(f"sandbox create failed: {err}")
+        # Create sandbox — no network_policies block = default-deny all outbound.
+        # `create --keep` stays attached, so we launch detached and poll for Ready.
+        create_proc = _create_sandbox_and_wait(_SANDBOX_NAME)
 
         # Apply policy
         _run([
@@ -155,7 +177,14 @@ def run(inputs: dict) -> dict:
         blocked = []
     finally:
         os.unlink(payload_path)
-        _run(["openshell", "sandbox", "delete", _SANDBOX_NAME])
+        _run(["openshell", "sandbox", "delete", _SANDBOX_NAME], timeout=60)
+        # Reap the detached create process now that the sandbox is gone
+        if create_proc is not None:
+            try:
+                create_proc.terminate()
+                create_proc.wait(timeout=10)
+            except Exception:
+                create_proc.kill()
 
     hash_intel = forensic.get("hash_intel") or {}
     if blocked and hash_intel.get("malicious"):

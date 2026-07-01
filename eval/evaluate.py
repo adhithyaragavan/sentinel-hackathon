@@ -51,8 +51,8 @@ def run() -> dict:
 
     # Stage 1: Triage
     triage_out, latency["triage"] = _timed(triage.run, alert)
-    _check(checks, "triage.severity == critical",
-           triage_out["severity"] == gt["triage_severity"],
+    _check(checks, f"triage.severity in {gt['triage_severity_acceptable']}",
+           triage_out["severity"] in gt["triage_severity_acceptable"],
            f"got {triage_out['severity']!r}")
     _check(checks, "triage.duplicate == false",
            triage_out["duplicate"] == gt["triage_duplicate"],

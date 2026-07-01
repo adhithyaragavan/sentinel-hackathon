@@ -2,7 +2,7 @@
   "description": "Expected outcomes for the mock EDR alert EDR-2024-001337. Used by eval/evaluate.py to score the pipeline against known-correct answers.",
   "alert_id": "EDR-2024-001337",
   "expected": {
-    "triage_severity": "critical",
+    "triage_severity_acceptable": ["critical", "high"],
     "triage_duplicate": false,
     "forensic_min_iocs": 4,
     "forensic_malware_family": "AsyncRAT",

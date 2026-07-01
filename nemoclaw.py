@@ -26,6 +26,12 @@ def _get_client() -> OpenAI:
     return _client
 
 
+# Nemotron is a reasoning model — it spends tokens on internal reasoning before
+# emitting the answer, so the budget must cover reasoning + the full JSON payload.
+# Too low and the JSON gets truncated mid-structure.
+_MAX_TOKENS = 4096
+
+
 def infer(system_prompt: str, user_prompt: str, model: str = _DEFAULT_MODEL) -> str:
     """Send a prompt through the Privacy Router to NIM and return the response text."""
     client = _get_client()
@@ -36,20 +42,49 @@ def infer(system_prompt: str, user_prompt: str, model: str = _DEFAULT_MODEL) -> 
             {"role": "user", "content": user_prompt},
         ],
         temperature=0.1,
-        max_tokens=1024,
+        max_tokens=_MAX_TOKENS,
     )
     return response.choices[0].message.content.strip()
 
 
+def _extract_json(raw: str) -> str:
+    """Pull a JSON object out of a model response that may include reasoning
+    traces (<think>...</think>), markdown fences, or surrounding prose.
+    Nemotron reasoning models sometimes emit these; be tolerant."""
+    # Drop <think>...</think> reasoning blocks
+    if "</think>" in raw:
+        raw = raw.split("</think>")[-1]
+    # Strip markdown fences
+    if "```" in raw:
+        # take the content of the first fenced block
+        parts = raw.split("```")
+        if len(parts) >= 2:
+            candidate = parts[1]
+            if candidate.lstrip().startswith("json"):
+                candidate = candidate.lstrip()[4:]
+            raw = candidate
+    # Fall back to the outermost {...} span
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        raw = raw[start : end + 1]
+    return raw.strip()
+
+
 def infer_json(system_prompt: str, user_prompt: str, model: str = _DEFAULT_MODEL) -> dict:
-    """Like infer() but parses and returns the JSON object from the response."""
+    """Like infer() but parses and returns the JSON object from the response.
+    Retries once with a stricter instruction if the first parse fails."""
     raw = infer(system_prompt, user_prompt, model)
-    # Strip markdown fences if the model wrapped the JSON
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    return json.loads(raw.strip())
+    try:
+        return json.loads(_extract_json(raw))
+    except json.JSONDecodeError:
+        # One retry with an explicit reminder — cheap insurance for the live demo
+        retry = infer(
+            system_prompt,
+            user_prompt + "\n\nReturn ONLY the raw JSON object. No reasoning, no prose, no markdown.",
+            model,
+        )
+        return json.loads(_extract_json(retry))
 
 
 def smoke_test() -> bool:

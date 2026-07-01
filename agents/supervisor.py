@@ -161,8 +161,9 @@ def run(inputs: dict) -> dict:
         )
     else:
         decision = "escalated"
-        webhook_url = os.environ.get("SLACK_WEBHOOK_URL", "")
-        if not webhook_url:
+        webhook_url = os.environ.get("SLACK_WEBHOOK_URL", "").strip()
+        # Treat an unset var or a leftover placeholder as "no webhook configured"
+        if not webhook_url.startswith("https://"):
             outcome = (
                 f"ESCALATED (Slack skipped — SLACK_WEBHOOK_URL not set). "
                 f"Risk score {risk_score:.2f} >= threshold {threshold}. "
