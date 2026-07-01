@@ -1,0 +1,15 @@
+{
+  "description": "Expected outcomes for the mock EDR alert EDR-2024-001337. Used by eval/evaluate.py to score the pipeline against known-correct answers.",
+  "alert_id": "EDR-2024-001337",
+  "expected": {
+    "triage_severity": "critical",
+    "triage_duplicate": false,
+    "forensic_min_iocs": 4,
+    "forensic_malware_family": "AsyncRAT",
+    "executor_verdict": "malicious",
+    "executor_expect_blocked_connection": true,
+    "planner_expected_actions": ["isolate_host", "kill_process", "block_ip", "quarantine_file"],
+    "planner_min_risk_score": 0.7,
+    "supervisor_decision": "escalated"
+  }
+}

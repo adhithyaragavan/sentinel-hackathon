@@ -9,7 +9,9 @@ import json
 from openai import OpenAI
 
 _NIM_BASE_URL = "https://integrate.api.nvidia.com/v1"
-_DEFAULT_MODEL = "nvidia/llama-3.1-nemotron-70b-instruct"
+# Hackathon-recommended default for agentic reasoning + tool calling.
+# Upgrade to nvidia/nemotron-3-super-120b-a12b only if quality outweighs latency.
+_DEFAULT_MODEL = "nvidia/nemotron-3-nano-30b-a3b"
 
 _client: OpenAI | None = None
 
@@ -48,3 +50,27 @@ def infer_json(system_prompt: str, user_prompt: str, model: str = _DEFAULT_MODEL
         if raw.startswith("json"):
             raw = raw[4:]
     return json.loads(raw.strip())
+
+
+def smoke_test() -> bool:
+    """Verify NIM connectivity by listing models and doing a tiny completion.
+    Returns True on success, raises on failure. Used by scripts/smoke_test.sh."""
+    client = _get_client()
+
+    models = client.models.list()
+    model_ids = [m.id for m in models.data]
+    print(f"NIM reachable — {len(model_ids)} models available")
+    if _DEFAULT_MODEL in model_ids:
+        print(f"Default model '{_DEFAULT_MODEL}' is available")
+    else:
+        print(f"WARNING: default model '{_DEFAULT_MODEL}' not in model list")
+
+    reply = infer("You are a health check.", "Reply with the single word: OK")
+    print(f"Inference OK — model replied: {reply!r}")
+    return True
+
+
+if __name__ == "__main__":
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+    smoke_test()
